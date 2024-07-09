@@ -1,3 +1,19 @@
+<div align="center">
+    <b><font size="5">Aligning Large Language Models from Self-Reference AI Feedback</font></b><br>
+    <b><font size="5">with one General Principle</font></b>
+    <sup>
+    </sup>
+    <div> </div>
+</div>
+
+
+<div align="center">
+
+[📘License](#license) |
+[🤗Dataset](https://huggingface.co/datasets/rbao2018/Self_Ref_Feedback) |
+[📜Paper](https://arxiv.org/abs/2406.11190)
+
+</div>
 
 ## Introduction
 Our project has implemented the training process of the self-reference AI feedback with one general principle. We also partially refactoring the [OpenRLHF](https://github.com/OpenLLMAI/OpenRLHF) framework to improve the efficiency of the PPO algorithm.
@@ -15,6 +31,11 @@ Our project has implemented the training process of the self-reference AI feedba
 1. Replace the original Deepspeed framework with the FSDP framework to reduce GPU memory usage and increase training speed.
 2. Optimize the scheduling algorithm for asynchronous actor-critic training in the PPO training process to enhance overall framework efficiency.
 3. Improve the implementation of experience replay generation to avoid the inefficiency of multiple small-batch reply generations by Vllm.
+
+
+## License
+
+The code is licensed under Apache-2.0, while model weights are fully open for academic research.
 
 ## References & Acknowledgements
 
