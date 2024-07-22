@@ -6,7 +6,8 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.fsdp import ShardingStrategy
 
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer
-
+from transformers.models.phi3.modeling_phi3 import Phi3DecoderLayer
+from transformers.models.qwen2.modeling_qwen2 import Qwen2DecoderLayer
 
 @dataclass
 class sharding_dict:
@@ -25,6 +26,8 @@ class layer_type_dict:
     asdasdasd
     """
     llama = LlamaDecoderLayer
+    qwen2 = Qwen2DecoderLayer
+    phi3 = Phi3DecoderLayer
 
     
 def get_layer_wrapper(layer_type: nn.Module):
@@ -52,9 +55,15 @@ def apply_fsdp_checkpointing(model):
         CheckpointImpl,
         apply_activation_checkpointing,
     )
-    from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
-    check_fn = lambda submodule: isinstance(submodule, LlamaDecoderLayer)
+    def check_fn(submodule):
+        return (
+            isinstance(submodule, nn.TransformerEncoderLayer) or
+            isinstance(submodule, nn.TransformerDecoderLayer) or
+            # 添加更多模型层类型的检查
+            'DecoderLayer' in submodule.__class__.__name__ or
+            'EncoderLayer' in submodule.__class__.__name__
+        )
     non_reentrant_wrapper = partial(
         checkpoint_wrapper,
         checkpoint_impl=CheckpointImpl.NO_REENTRANT,

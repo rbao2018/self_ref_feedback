@@ -24,11 +24,10 @@ class LogExpWithLMLoss(nn.Module):
     Pairwise Loss and Language Model Loss for Reward Model
     """
     
-    def __init__(self, use_margin=True, lm_loss_coef=1e-6, packing_samples=False):
+    def __init__(self, use_margin=True, lm_loss_coef=1e-6):
         super().__init__()
         self.use_margin = use_margin
         self.lm_loss_coef = lm_loss_coef
-        self.packing_samples = packing_samples
 
     def forward(
         self, 
@@ -45,18 +44,12 @@ class LogExpWithLMLoss(nn.Module):
             rm_loss = torch.log(1 + torch.exp(reject_reward - chosen_reward)).mean()
         loss = rm_loss
         if self.lm_loss_coef > 1e-6:
-            if self.packing_samples:
-                shift_labels = chosen_labels.view(-1)[1:]
-                shift_logits = logits.view(-1)[:shift_labels.size(0)]
-                lm_loss = F.cross_entropy(shift_logits, shift_labels)
-                loss += self.lm_loss_coef * lm_loss
-            else:
-                shift_logits = logits[:chosen_labels.size(0), :chosen_labels.size(1) - 1 , :]
-                shift_labels = chosen_labels[..., 1:]
-                shift_logits = shift_logits.contiguous().view(-1, shift_logits.size(-1))
-                shift_labels = shift_labels.contiguous().view(-1).to(shift_logits.device)
-                lm_loss = F.cross_entropy(shift_logits, shift_labels)
-                loss += self.lm_loss_coef * lm_loss
+            shift_logits = logits[:chosen_labels.size(0), :chosen_labels.size(1) - 1 , :]
+            shift_labels = chosen_labels[..., 1:]
+            shift_logits = shift_logits.contiguous().view(-1, shift_logits.size(-1))
+            shift_labels = shift_labels.contiguous().view(-1).to(shift_logits.device)
+            lm_loss = F.cross_entropy(shift_logits, shift_labels)
+            loss += self.lm_loss_coef * lm_loss
         return loss
     
 class RewardModelTrainer(ABC):
@@ -101,8 +94,7 @@ class RewardModelTrainer(ABC):
         elif loss == "logexpwithlm":
             self.loss_fn = LogExpWithLMLoss(
                 use_margin=self.args.use_margin, 
-                lm_loss_coef=self.args.lm_loss_coef,
-                packing_samples=self.args.packing_samples
+                lm_loss_coef=self.args.lm_loss_coef
             )
             self.strategy.print(f"LogExp With LM Loss with margin {self.args.use_margin} and lm_loss_coef {self.args.lm_loss_coef}")
         else:
@@ -266,7 +258,7 @@ class RewardModelTrainer(ABC):
 
         We do this to avoid doing two forward passes, because it's faster for FSDP.
         """
-        input_ids,att_masks = batch["concat_ids"], batch["concat_masks"]
+        input_ids, att_masks = batch["concat_ids"], batch["concat_masks"]
         half_batch_size = att_masks.shape[0] // 2
         all_values, logits = model(input_ids, 
                                    attention_mask=att_masks, 
@@ -274,7 +266,6 @@ class RewardModelTrainer(ABC):
                                    packing_samples=self.args.packing_samples)
         chosen_reward = all_values[: half_batch_size]
         reject_reward = all_values[half_batch_size:]
-        # print(outputs.keys())
         if batch.get("extras", None) is not None:
             margin = torch.tensor(batch["extras"], dtype=chosen_reward.dtype, device=chosen_reward.device)
 

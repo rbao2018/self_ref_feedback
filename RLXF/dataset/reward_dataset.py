@@ -19,8 +19,13 @@ def preprocess_data(
     if apply_chat_template:
         if prompt_key:
             prompt = apply_chat_template(data[prompt_key], tokenize=False, add_generation_prompt=True)
-            chosen = apply_chat_template(data[prompt_key] + data[chosen_key], tokenize=False)[len(prompt) :]
-            rejected = apply_chat_template(data[prompt_key] + data[rejected_key], tokenize=False)[len(prompt) :]
+            if isinstance(data[chosen_key], str) and isinstance(data[rejected_key], str):
+                chosen_list = [{"role":"assistant", "content":data[chosen_key]}]
+                rejected_list = [{"role":"assistant", "content":data[rejected_key]}]
+                chosen = apply_chat_template(data[prompt_key] + chosen_list, tokenize=False)[len(prompt) :]
+                rejected = apply_chat_template(data[prompt_key] + rejected_list, tokenize=False)[len(prompt) :]
+            else:
+                raise NotImplementedError
         else:
             prompt = ""
             chosen = apply_chat_template(data[chosen_key], tokenize=False)
@@ -170,28 +175,20 @@ class RewardDataset(Dataset):
         reject_ids = []
         extras = []
         for chosen_id, chosen_mask, reject_id, rejects_mask, extra in item_list:
-            chosen_ids.append(chosen_id)
-            chosen_masks.append(chosen_mask)
-            reject_ids.append(reject_id)
-            rejects_masks.append(rejects_mask)
-            extras.append(extra)
+            chosen_ids.append(chosen_id.flatten())
+            chosen_masks.append(chosen_mask.flatten())
+            reject_ids.append(reject_id.flatten())
+            rejects_masks.append(rejects_mask.flatten())
+            extras.append(float(extra) if not self.is_dpo else list(extra))
 
-        chosen_ids = zero_pad_sequences(chosen_ids, side="right", value=self.tokenizer.pad_token_id)
-        chosen_labels = zero_pad_sequences(chosen_ids, side="right", value=-100)
-        chosen_masks = zero_pad_sequences(chosen_masks, side="right")
-        reject_ids = zero_pad_sequences(reject_ids, side="right", value=self.tokenizer.pad_token_id)
-        rejects_masks = zero_pad_sequences(rejects_masks, side="right")
         concat_ids = zero_pad_sequences(chosen_ids + reject_ids, side="right", value=self.tokenizer.pad_token_id)
         concat_masks = zero_pad_sequences(chosen_masks + rejects_masks, side="right")
-        
-        assert concat_ids.shape == concat_masks.shape
+        chosen_labels = zero_pad_sequences(chosen_ids, side="right", value=-100)
 
         return {
             "concat_ids": concat_ids,
             "concat_masks": concat_masks,
-            "chosen_ids": chosen_ids,
             "chosen_labels": chosen_labels,
-            "reject_ids": reject_ids,
             "extras": extras
         }
 
@@ -204,15 +201,14 @@ class RewardDataset(Dataset):
         
         for chosen_id, chosen_mask, reject_id, rejects_mask, extra in item_list:
             chosen_ids.append(chosen_id.flatten())
-            chosen_att_masks.append(chosen_mask)
-            extras.append(extra)
+            chosen_att_masks.append(chosen_mask.flatten())
             rejected_ids.append(reject_id.flatten())
-            rejected_att_masks.append(rejects_mask)
+            rejected_att_masks.append(rejects_mask.flatten())
+            extras.append(float(extra) if not self.is_dpo else list(extra))
         packed_input_ids = torch.cat(chosen_ids + rejected_ids, dim=0).unsqueeze(0) # 1 * chose_len + reject_len
         concat_masks = zero_pad_sequences(chosen_att_masks + rejected_att_masks, side="right", value=0)
-        chose_id_lens = torch.sum(concat_masks[:len(item_list),:])
         chosen_labels = torch.cat(chosen_ids, dim=0).unsqueeze(0)
-        assert chose_id_lens == chosen_labels.size(1)
+
         return {
             "concat_ids": packed_input_ids,
             "concat_masks": concat_masks,

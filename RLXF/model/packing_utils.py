@@ -71,7 +71,7 @@ def get_unpad_data(attention_mask: "torch.Tensor") -> Tuple["torch.Tensor", "tor
     ```
     """
     seqlens_in_batch = attention_mask.sum(dim=-1)
-    indices = torch.arange(0, torch.sum(attention_mask), device=attention_mask.device).flatten()
+    indices = torch.arange(0, torch.sum(attention_mask), device=attention_mask.device)
     max_seqlen_in_batch = seqlens_in_batch.max().item()
     cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
     return indices, cu_seqlens, max_seqlen_in_batch

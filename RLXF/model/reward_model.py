@@ -8,7 +8,6 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 from openrlhf.utils.logging import init_logger
-from openrlhf.models.utils import find_all_linear_names
 
 from .packing_utils import patch_for_block_diag_attn
 
@@ -96,7 +95,7 @@ def get_llm_for_sequence_regression(
         lora_config = LoraConfig(
             r=lora_rank,
             lora_alpha=lora_alpha,
-            target_modules=target_modules or find_all_linear_names(model),
+            target_modules=target_modules,
             lora_dropout=0,
             bias="none",
         )
@@ -143,7 +142,7 @@ def _get_reward_model(base_llm_model):
             return_output=False,
             packing_samples=False,
         ) -> torch.Tensor:
-            seq_lens = attention_mask.sum(dim=-1).flatten()
+            seq_lens = attention_mask.sum(dim=-1)
             max_len = seq_lens.max().item()
             if packing_samples:
                 # 创建一个范围张量
@@ -152,6 +151,7 @@ def _get_reward_model(base_llm_model):
                 mask = range_tensor < seq_lens.unsqueeze(1)
                 # 使用掩码来选择有效的元素
                 position_ids = range_tensor.expand(seq_lens.size(0), max_len)[mask]
+                position_ids = position_ids.unsqueeze(0)
             else:
                 # https://github.com/OpenRLHF/OpenRLHF/issues/217
                 position_ids = attention_mask.long().cumsum(-1) - 1
@@ -168,9 +168,9 @@ def _get_reward_model(base_llm_model):
             last_hidden_state = outputs["last_hidden_state"]
             all_values = self.value_head(last_hidden_state).squeeze(-1) # bsz * seq
             logits = getattr(self, self.config.lm_head_name)(last_hidden_state).float()
-            # outputs["logits"] = logits
-            # print(f"code is here in line 153!!! for logits shape{logits.shape}", flush=True)
+    
             # finding the last "1" in attention mask for eos_token indices
+
             if packing_samples:
                 eos_indices = torch.cumsum(seq_lens, dim=0).flatten() - 1
                 reward = all_values.flatten().gather(dim=0, index=eos_indices)
@@ -213,6 +213,7 @@ def _get_critic_model(base_llm_model):
                 mask = range_tensor < seq_lens.unsqueeze(1)
                 # 使用掩码来选择有效的元素
                 position_ids = range_tensor.expand(seq_lens.size(0), max_len)[mask]
+                position_ids = position_ids.unsqueeze(0)
             else:
                 # https://github.com/OpenRLHF/OpenRLHF/issues/217
                 position_ids = attention_mask.long().cumsum(-1) - 1
