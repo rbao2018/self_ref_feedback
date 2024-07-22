@@ -16,7 +16,7 @@ logger = init_logger(__name__)
 
 # Construct transformer with a value head for sequence classification.
 # https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py#L1310
-def get_llm_for_sequence_regression(
+def get_actor_model(
     model_name_or_path: str,
     model_type: str,
     bf16=True,
@@ -25,7 +25,6 @@ def get_llm_for_sequence_regression(
     lora_alpha=16,
     target_modules=None,
     use_flash_attention_2 = True,
-    init_value_head: bool = False,
     packing_samples=False,
     **kwargs,
 ) -> nn.Module:
@@ -46,10 +45,8 @@ def get_llm_for_sequence_regression(
     try:
         base_class = AutoModelForCausalLM._model_mapping[type(config)]
         # base_pretrained_class = base_class.__base__
-        if model_type == "reward":
-            cls_class = _get_reward_model(base_class)
-        elif model_type == "critic":
-            cls_class = _get_critic_model(base_class)
+        if model_type == "actor":
+            cls_class = _get_actor_model(base_class)
         else:
             raise NotImplementedError
         logger.info(f"base_class: {base_class}")
@@ -72,12 +69,11 @@ def get_llm_for_sequence_regression(
             pretrained_model_name = causal_model_name.split("For")[0] + "PreTrainedModel"
 
         logger.info(f"BASE_MODEL_CLASS: {auto_model_name}, PRETRAINED_MODEL_CLASS: {pretrained_model_name}")
+
         base_class = get_class_from_dynamic_module(f"{module_file}.{auto_model_name}", model_name_or_path)
-   
-        if model_type == "reward":
-            cls_class = _get_reward_model(base_class)
-        elif model_type == "critic":
-            cls_class = _get_critic_model(base_class)
+
+        if model_type == "actor":
+            cls_class = _get_actor_model(base_class)
         else:
             raise NotImplementedError
 
@@ -89,6 +85,8 @@ def get_llm_for_sequence_regression(
         attn_implementation = "flash_attention_2" if use_flash_attention_2 else "eager",
         **kwargs,
     )
+    if model_type == "actor":
+        model.config.architectures = config.architectures
 
     # LoRA
     if lora_rank > 0:
@@ -101,9 +99,8 @@ def get_llm_for_sequence_regression(
             bias="none",
         )
         model = get_peft_model(model, lora_config)
-
     
-
+    
     # MoE - balancing loss
     model_config = model.config.to_dict()
     if "output_router_logits" in model_config:
@@ -120,29 +117,22 @@ def get_llm_for_sequence_regression(
         model.config.packing_samples = True
         patch_for_block_diag_attn(model_type)
 
-    # NOTE: For reward model training only, intialize value_head manually
-    # because deepspeed.zero.Init() will not intialize them.
-    # TODO: Find a better way to clarify reward model training.
-    if init_value_head:
-        model.value_head.weight.data.normal_(mean=0.0, std=1 / (config.hidden_size + 1))
     return model
 
 
-def _get_reward_model(base_llm_model):
+def _get_actor_model(base_llm_model):
     class LLMForSequenceRegression(base_llm_model):
         supports_gradient_checkpointing = True
 
-        def __init__(self, config: AutoConfig):
-            super().__init__(config)
-            self.value_head = nn.Linear(config.hidden_size, 1, bias=False)
-
         def forward(
             self,
-            input_ids: torch.LongTensor = None,
+            input_ids,
+            num_actions: int = None,
             attention_mask: Optional[torch.Tensor] = None,
             return_output=False,
             packing_samples=False,
         ) -> torch.Tensor:
+            """Returns action log probs"""
             seq_lens = attention_mask.sum(dim=-1).flatten()
             max_len = seq_lens.max().item()
             if packing_samples:
@@ -156,8 +146,7 @@ def _get_reward_model(base_llm_model):
                 # https://github.com/OpenRLHF/OpenRLHF/issues/217
                 position_ids = attention_mask.long().cumsum(-1) - 1
                 position_ids.masked_fill_(attention_mask == 0, 1)
-
-            outputs = getattr(self, self.base_model_prefix)(
+            output = getattr(self, self.base_model_prefix)(
                 input_ids,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
@@ -165,78 +154,21 @@ def _get_reward_model(base_llm_model):
                 use_cache=False,
                 return_dict=True
             )
-            last_hidden_state = outputs["last_hidden_state"]
-            all_values = self.value_head(last_hidden_state).squeeze(-1) # bsz * seq
+            labels = input_ids[:, 1:].unsqueeze(-1)
+            last_hidden_state = output["last_hidden_state"]
             logits = getattr(self, self.config.lm_head_name)(last_hidden_state).float()
-            # outputs["logits"] = logits
-            # print(f"code is here in line 153!!! for logits shape{logits.shape}", flush=True)
-            # finding the last "1" in attention mask for eos_token indices
-            if packing_samples:
-                eos_indices = torch.cumsum(seq_lens, dim=0).flatten() - 1
-                reward = all_values.flatten().gather(dim=0, index=eos_indices)
-            else:
-                eos_indices = attention_mask.long().fliplr().argmax(dim=1, keepdim=True)
-                eos_indices = attention_mask.size(1) - 1 - eos_indices
-                reward = all_values.gather(dim=1, index=eos_indices).squeeze(1)
-            if return_output:
-                return reward, logits
             
-            return reward
+            log_probs = F.log_softmax(logits[:, :-1, :], dim=-1)
+            log_probs = log_probs.gather(dim=-1, index=labels).squeeze(-1)
 
-    return LLMForSequenceRegression
-
-
-def _get_critic_model(base_llm_model):
-    class LLMForSequenceRegression(base_llm_model):
-        supports_gradient_checkpointing = True
-
-        def __init__(self, config: AutoConfig):
-            super().__init__(config)
-            # setattr(self, self.base_model_prefix, base_pretrained_model(config))
-            # setattr(self, config.lm_head_name, nn.Linear(config.hidden_size, config.vocab_size, bias=False))
-            self.value_head = nn.Linear(config.hidden_size, 1, bias=False)
-
-        def forward(
-            self,
-            input_ids: torch.LongTensor = None,
-            action_mask: Optional[torch.Tensor] = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            return_output=False,
-            packing_samples=False,
-        ) -> torch.Tensor:
-            seq_lens = attention_mask.sum(dim=-1).flatten()
-            max_len = seq_lens.max().item()
-            if packing_samples:
-                # 创建一个范围张量
-                range_tensor = torch.arange(max_len, device=attention_mask.device).unsqueeze(0)
-                # 创建一个掩码，用于筛选有效的位置
-                mask = range_tensor < seq_lens.unsqueeze(1)
-                # 使用掩码来选择有效的元素
-                position_ids = range_tensor.expand(seq_lens.size(0), max_len)[mask]
-            else:
-                # https://github.com/OpenRLHF/OpenRLHF/issues/217
-                position_ids = attention_mask.long().cumsum(-1) - 1
-                position_ids.masked_fill_(attention_mask == 0, 1)
-            outputs = getattr(self, self.base_model_prefix)(
-                input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                output_hidden_states=True,
-                use_cache=False,
-                return_dict=True
-            )
-            last_hidden_state = outputs["last_hidden_state"]
-            all_values = self.value_head(last_hidden_state).squeeze(-1)
-            if not packing_samples:
-                value = all_values[:, :-1]
-            else:
-                value = all_values
-                # print(f"return_output:{return_output}", flush=True)
-                # print(f"action_mask:{action_mask}", flush=True)
-            if action_mask is not None and not packing_samples:
-                value = value[:, -action_mask.size(1):]
             if return_output:
-                return (value, outputs)
-            return value
+                if packing_samples or num_actions is None:
+                    return log_probs, output
+                else:
+                    return log_probs[:,-num_actions:], output
+            else:
+                if packing_samples or num_actions is None:
+                    return log_probs
+                return log_probs[:, -num_actions:]
 
     return LLMForSequenceRegression

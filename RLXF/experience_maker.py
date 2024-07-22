@@ -398,9 +398,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             )
             # using prompt token ids for vLLM       
             ray.get([engine.generate.remote(
-                sampling_params=sampling_params,
-                use_tqdm=False) for engine in self.vllm_engines
-                ]
+                sampling_params=sampling_params, use_tqdm=False) for engine in self.vllm_engines]
             )
         torch.distributed.barrier()
         engine = self.vllm_engines[rank % len(self.vllm_engines)]

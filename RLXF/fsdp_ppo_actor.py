@@ -195,9 +195,6 @@ class ActorPPOTrainer(PPOTrainer):
                 shape = param.shape
                 # refs = []
                 for engine in self.vllm_engines:
-                    # refs.append(
-                    #     engine.update_weight.remote(name, dtype=param.dtype, shape=shape, empty_cache=count == num_params)
-                    # )
                     engine.update_weight.remote(name, dtype=param.dtype, shape=shape, empty_cache=count == num_params)
                 device_data = param.data.to("cuda")
                 torch.distributed.broadcast(
@@ -239,7 +236,7 @@ class ActorModelRayActor(BasePPORole):
             weight_decay = strategy.args.l2
         )
         # configure tokenizer
-        self.tokenizer = get_tokenizer(pretrain, model, "left", strategy)
+        self.tokenizer = get_tokenizer(pretrain, model)
 
         args = strategy.args
 

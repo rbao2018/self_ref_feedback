@@ -6,26 +6,13 @@ from transformers import AutoTokenizer
 
 from openrlhf.utils import DeepspeedStrategy
 
-def get_sp_tokens(args):
-    sp_tokens = dict()
-    for key in ("bos_token", "eos_token", "pad_token", "unk_token"):
-        sp_token = getattr(args, key, None)
-        if sp_token is not None:
-            sp_tokens[key] = sp_token
-    return sp_tokens
 
-
-def get_tokenizer(pretrain, model, padding_side="left", strategy=None, use_fast=True):
-    sp_tokens = get_sp_tokens(strategy.args)
-
-    tokenizer = AutoTokenizer.from_pretrained(pretrain, 
-                                              trust_remote_code=True, 
-                                              use_fast=use_fast,
-                                              **sp_tokens)
+def get_tokenizer(pretrain, model, padding_side="right", use_fast=True):
+    tokenizer = AutoTokenizer.from_pretrained(pretrain, trust_remote_code=True, 
+                                              use_fast=use_fast, add_bos_token=False)
     tokenizer.padding_side = padding_side
     # NOTE: When enable vLLM, do not resize_token_embeddings, or the vocab size will mismatch with vLLM.
     # https://github.com/facebookresearch/llama-recipes/pull/196
-    # if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.unk_token
     tokenizer.pad_token_id = tokenizer.unk_token_id
     model.config.pad_token_id = tokenizer.unk_token_id

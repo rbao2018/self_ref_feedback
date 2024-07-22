@@ -54,7 +54,7 @@ def _add_training_args(parser):
     group.add_argument("--learning_rate", type=float, default=1e-5)
     group.add_argument("--zpg", type=int, default=1, help="ZeRO++ max partition size")
     group.add_argument("--adam_offload", action="store_true", default=False)
-    group.add_argument("--flash_attn", action="store_true", default=False)
+    group.add_argument("--flash_attn", action="store_true", default=True)
     group.add_argument("--compute_fp32_loss", action="store_true", default=False)
     group.add_argument("--pretrain_mode", action="store_true", default=False)
     group.add_argument("--aux_loss_coef", type=float, default=0.0)
@@ -65,7 +65,7 @@ def _add_training_args(parser):
     group.add_argument("--lora_rank", type=int, default=0)
     group.add_argument("--lora_alpha", type=int, default=16)
     group.add_argument("--target_modules", type=list, default=None)
-    group.add_argument("--input_template", type=str, default="Human: {}\nAssistant: ")
+    group.add_argument("--packing_samples", action="store_true", default=False)
     group.add_argument("--gradient_checkpointing", action="store_true", default=False)
     group.add_argument("--gradient_checkpointing_use_reentrant", action="store_true")
     group.add_argument("--lr_scheduler", type=str, default="cosine")
@@ -211,12 +211,16 @@ def _add_validation_args(parser):
 
 def _add_data_args(parser):
     group = parser.add_argument_group(title='data and dataloader')
-    group.add_argument("--bos_token", type=str, default=None)
-    group.add_argument("--eos_token", type=str, default=None)
-    group.add_argument("--pad_token", type=str, default=None)
-    group.add_argument("--unk_token", type=str, default=None)
     # custom dataset key name
     group.add_argument("--input_key", type=str, default=None)
+    group.add_argument("--output_key", type=str, default=None)
+    group.add_argument("--prompt_key", type=str, default=None)
+    group.add_argument("--chosen_key", type=str, default="chosen")
+    group.add_argument("--rejected_key", type=str, default="rejected")
+    group.add_argument("--input_template", type=str, default="User: {}\nAssistant: ")
+    group.add_argument("--apply_chat_template", action="store_true", default=False, 
+                       help="Use HF tokenizer chat template")
+    group.add_argument("--tokenizer_chat_template", type=str, default=None)
     # wandb pamameters
     group.add_argument("--use_wandb", action='store_true')
     group.add_argument("--wandb_org", type=str, default="OpenRLHF")
