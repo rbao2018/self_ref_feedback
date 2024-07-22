@@ -3,7 +3,7 @@ import os
 
 from transformers.trainer import get_scheduler
 
-from RLXF.dataset.reward_dataset import RLHFDataset
+from RLXF.dataset.reward_dataset import RewardDataset
 from RLXF.fsdp_strategy import FSDPStrategy
 from RLXF.model.reward_model import get_llm_for_sequence_regression
 from RLXF.trainer.rm_trainer import RewardModelTrainer
@@ -33,12 +33,13 @@ def main(args):
         lora_alpha=strategy.args.lora_alpha,
         target_modules=strategy.args.target_modules,
         use_flash_attention_2=strategy.args.flash_attn,
-        init_value_head=not args.skip_train
+        init_value_head=not args.skip_train,
+        packing_samples=args.packing_samples
     )
     args.input_template = args.input_template.replace('\\n', '\n')
 
     # configure tokenizer
-    tokenizer = get_tokenizer(args.pretrain, model, "left", strategy)
+    tokenizer = get_tokenizer(args.pretrain, model)
 
     strategy.print(model)
     model = strategy.prepare_model(model)
@@ -60,17 +61,21 @@ def main(args):
     )
     train_data = train_data.select(range(min(args.max_samples, len(train_data))))
     eval_data = eval_data.select(range(min(args.max_samples, len(eval_data))))
-    train_dataset = RLHFDataset(train_data, tokenizer, strategy, input_template=args.input_template)
-    eval_dataset = RLHFDataset(eval_data, tokenizer, strategy, input_template=args.input_template)
+    train_dataset = RewardDataset(train_data, tokenizer, args.max_len, strategy)
+    eval_dataset = RewardDataset(eval_data, tokenizer, args.max_len, strategy)
     train_dataloader = strategy.setup_dataloader(
         train_dataset,
         args.micro_train_batch_size,
         pin_memory=True,
         shuffle=True,
-        collate_fn=train_dataset.collate_fn
+        collate_fn=train_dataset.collate_fn if not args.packing_samples else train_dataset.packing_collate_fn
     )
     eval_dataloader = strategy.setup_dataloader(
-        eval_dataset, args.micro_train_batch_size, True, False, eval_dataset.collate_fn
+        eval_dataset, 
+        args.micro_train_batch_size, 
+        pin_memory=True, 
+        shuffle=False, 
+        collate_fn=eval_dataset.collate_fn if not args.packing_samples else train_dataset.packing_collate_fn
     )
     # scheduler
     num_update_steps_per_epoch = len(train_dataloader) * args.max_epochs // strategy.accumulated_gradient
