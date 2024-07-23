@@ -20,7 +20,7 @@ from .dataset.prompt_dataset import PromptDataset
 from .experience_maker import Experience, RemoteExperienceMaker
 from .trainer.ppo_trainer import PPOTrainer
 from .fsdp_strategy import FSDPStrategy
-from .model.reward_model import get_llm_for_sequence_regression
+from .model.actor_model import get_actor_model
 
 
 class ActorPPOTrainer(PPOTrainer):
@@ -212,16 +212,9 @@ class ActorModelRayActor(BasePPORole):
     def init_model_from_pretrained(self, strategy: FSDPStrategy, pretrain):
         self.strategy = strategy
         strategy.setup_distributed()
-        model = get_llm_for_sequence_regression(
-            pretrain,
-            "actor",
-            bf16=strategy.args.bf16,
-            global_rank=strategy.get_rank(),
-            lora_rank=strategy.args.lora_rank,
-            lora_alpha=strategy.args.lora_alpha,
-            target_modules=strategy.args.target_modules,
-            use_flash_attention_2=strategy.args.flash_attn,
-        )
+        
+        model = get_actor_model(pretrain, "actor", strategy.args)
+
         strategy.print(model)
 
         self.actor = strategy.prepare_model(model)

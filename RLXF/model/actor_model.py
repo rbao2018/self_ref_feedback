@@ -19,22 +19,15 @@ logger = init_logger(__name__)
 def get_actor_model(
     model_name_or_path: str,
     model_type: str,
-    bf16=True,
-    global_rank=0,
-    lora_rank=0,
-    lora_alpha=16,
-    target_modules=None,
-    use_flash_attention_2 = True,
-    packing_samples=False,
-    **kwargs,
-) -> nn.Module:
+    args,
+    **kwargs) -> nn.Module:
     """Get transformer with a sequence classification head on top (linear layer).
 
     Args:
         model_name_or_path (str): Path to pretrained model.
         model_type (str): Either "reward" or "critic" or "actor".
         bf16 (bool, optional): Whether enable bfloat16. Defaults to True.
-        use_flash_attention_2 (bool, optional): Whether use Flash Attention 2.0. Defaults to False.
+        flash_attn (bool, optional): Whether use Flash Attention 2.0. Defaults to False.
 
     Returns:
         nn.Module: pretrained transformer model.
@@ -81,20 +74,20 @@ def get_actor_model(
         model_name_or_path,
         config = config,
         trust_remote_code = True,
-        torch_dtype = torch.bfloat16 if bf16 else torch.float16,
-        attn_implementation = "flash_attention_2" if use_flash_attention_2 else "eager",
+        torch_dtype = torch.bfloat16 if args.bf16 else torch.float16,
+        attn_implementation = "flash_attention_2" if args.flash_attn else "eager",
         **kwargs,
     )
     if model_type == "actor":
         model.config.architectures = config.architectures
 
     # LoRA
-    if lora_rank > 0:
+    if args.lora_rank > 0:
         model.enable_input_require_grads()
         lora_config = LoraConfig(
-            r=lora_rank,
-            lora_alpha=lora_alpha,
-            target_modules=target_modules or find_all_linear_names(model),
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            target_modules=args.target_modules or find_all_linear_names(model),
             lora_dropout=0,
             bias="none",
         )
@@ -108,8 +101,8 @@ def get_actor_model(
         model.config.output_router_logits = True
     
     # packing samples using Flash Attention 2
-    if packing_samples:
-        assert use_flash_attention_2, "Only support `--packing_samples` with Flash Attention 2."
+    if args.packing_samples:
+        assert args.flash_attn, "Only support `--packing_samples` with Flash Attention 2."
         model_type = getattr(model.config, "model_type", None)
         patch_for_block_diag_attn(model_type)
 

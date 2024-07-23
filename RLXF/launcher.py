@@ -9,6 +9,7 @@ from ray.util.placement_group import PlacementGroup, placement_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from .model.reward_model import get_llm_for_sequence_regression
+from .model.actor_model import get_actor_model
 from .fsdp_strategy import FSDPStrategy
 
 
@@ -64,16 +65,7 @@ class ReferenceModelRayActor(BasePPORole):
     def init_model_from_pretrained(self, strategy: FSDPStrategy, pretrain):
         self.strategy = strategy
         strategy.setup_distributed()
-        model = get_llm_for_sequence_regression(
-            pretrain,
-            "actor",
-            bf16=strategy.args.bf16,
-            global_rank=strategy.get_rank(),
-            lora_rank=strategy.args.lora_rank,
-            lora_alpha=strategy.args.lora_alpha,
-            target_modules=strategy.args.target_modules,
-            use_flash_attention_2=strategy.args.flash_attn,
-        )
+        model = get_actor_model(pretrain, "actor", strategy.args)
         strategy.print(model)
         self.model = strategy.prepare_model(model)
         self.model.eval()
@@ -92,7 +84,7 @@ class ReferenceModelRayActor(BasePPORole):
                 num_actions,
                 attention_mask.to(device),
                 return_output,
-            )
+                packing_samples=self.strategy.args.packing_samples)
             torch.cuda.empty_cache()
         return log_probs.to("cpu")
 
@@ -121,7 +113,9 @@ class RewardModelRayActor(BasePPORole):
     ) -> torch.Tensor:
         device = torch.cuda.current_device()
         with torch.no_grad():
-            reward = self.model(sequences.to(device), attention_mask.to(device))
+            reward = self.model(sequences.to(device), 
+                                attention_mask.to(device), 
+                                packing_samples=self.strategy.args.packing_samples)
             torch.cuda.empty_cache()
         return reward.to("cpu")
 

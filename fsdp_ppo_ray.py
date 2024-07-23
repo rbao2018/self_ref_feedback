@@ -34,6 +34,9 @@ def _validate_args(args):
     assert (
         actor_world_size % critic_world_size == 0
     ), f"actor_world_size must be divisible by critic_world_size, got {actor_world_size} and {critic_world_size}"
+    assert (
+        args.vllm_num_engines <= actor_world_size
+    ), "vLLM engine should be less than actor world size"
 
 def train(args):
     _validate_args(args)

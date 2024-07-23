@@ -269,24 +269,20 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
     @torch.no_grad()
     def make_experience(self, 
                         replay_buffer,
-                        sequences_vllm: torch.Tensor,
-                        attention_mask_vllm: torch.Tensor,
-                        action_mask_vllm: torch.Tensor,
+                        sequences: torch.Tensor,
+                        attention_mask: torch.Tensor,
+                        action_mask: torch.Tensor,
                         batch_size: int, 
                         **generate_kwargs
                         ) -> Experience:
         self.actor.eval()
         device = torch.cuda.current_device()
-        a = torch.split(sequences_vllm, batch_size, dim=0)
-        b = torch.split(attention_mask_vllm, batch_size, dim=0)
-        c = torch.split(action_mask_vllm, batch_size, dim=0)
+        a = torch.split(sequences, batch_size, dim=0)
+        b = torch.split(attention_mask, batch_size, dim=0)
+        c = torch.split(action_mask, batch_size, dim=0)
         for (sequences_cpu, attention_mask_cpu, action_mask_cpu) in zip(a,b,c):
             num_actions = action_mask_cpu.size(1)
-            sequences, attention_mask, action_mask = (
-                sequences_cpu.to(device),
-                attention_mask_cpu.to(device),
-                action_mask_cpu.to(device)
-            )
+            
             # values
             value_ref = self.critic.forward.remote(sequences_cpu, action_mask_cpu, attention_mask_cpu)
 
@@ -297,15 +293,22 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
             # log probs
             start = time.time()
+            sequences_device, attention_mask_device, action_mask_device = (
+                sequences_cpu.to(device),
+                attention_mask_cpu.to(device),
+                action_mask_cpu.to(device)
+            )
             action_log_probs = self.actor(
-                sequences, 
+                sequences_device,
                 num_actions, 
-                attention_mask
+                attention_mask_device,
+                packing_samples=self.strategy.args.packing_samples
             )
             actor_time = time.time() - start
 
             # init log probs
             base_action_log_probs_ref = self.initial_model.forward.remote(sequences_cpu, num_actions, attention_mask_cpu)
+
             # self.strategy.print(f"log_probs: {action_log_probs[0][-num_actions:]}")
 
             # wait initial/critic/reward model done
@@ -332,40 +335,36 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 self.kl_ctl.value,
                 action_log_probs,
                 base_action_log_probs,
-                action_mask=action_mask,
+                action_mask=action_mask_device,
             )
             advantage, returns = self.get_advantages_and_returns(
                 value,
                 reward,
-                action_mask,
+                action_mask_device,
                 generate_kwargs["gamma"],
                 generate_kwargs["lambd"],
             )
 
             info = {
-                "kl": masked_mean(kl, action_mask, dim=-1),
+                "kl": masked_mean(kl, action_mask_device, dim=-1),
                 "reward": r,
                 "return": reward.sum(dim=-1),
-                "response_length": action_mask.float().sum(dim=-1),
-                "total_length": attention_mask.float().sum(dim=-1),
+                "response_length": action_mask_device.float().sum(dim=-1),
+                "total_length": attention_mask_device.float().sum(dim=-1),
             }
 
             experience = Experience(
-                sequences,
+                sequences_device,
                 action_log_probs,
                 value,
                 returns,
                 advantage,
-                attention_mask,
-                action_mask,
+                attention_mask_device,
+                action_mask_device,
                 info,
             )
 
             if self.strategy.args.perf:
-                # batch_size = 1 if isinstance(sequences_cpu, str) else sequences_cpu.size(0)
-                # info["generate_time"] = torch.full(
-                #     (batch_size,), generate_time, device=device
-                # )
                 info["actor_time"] = torch.full((batch_size,), actor_time, device=device)
                 info["wait_time"] = torch.full((batch_size,), wait_time, device=device)
 
@@ -375,7 +374,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             self._ref = self.critic.append.remote(experience_cpu)
             replay_buffer.append(experience)
         self.actor.train()  # reset model state
-        # return experience
 
     def _generate_local(self, prompts: List[str], **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         inputs = self.tokenize_fn(prompts, self.prompt_max_len, device="cuda")
@@ -414,41 +412,36 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         pad_token_id, eos_token_id = self.tokenizer.pad_token_id, self.tokenizer.eos_token_id
         for i, output in enumerate(outputs):
             # TODO: how to force vLLM generate at least one token?
-            output_token_ids = output.outputs[0].token_ids
-            if output_token_ids[0] == self.tokenizer.eos_token_id:
+            output.outputs[0].token_ids[-1] = eos_token_id
+            if output.outputs[0].token_ids[0] == eos_token_id:
                 logger.warning(f"Only EOS output for prompt: {output}")
                 outputs[i] = outputs[(i+1) % len(outputs)]
             max_input_len = max(max_input_len, len(output.prompt_token_ids))
-            max_output_len = max(max_output_len, len(output_token_ids))
+            max_output_len = max(max_output_len, len(output.outputs[0].token_ids))
 
-        # self.strategy.print(f"log prob outputs:{outputs[0].outputs[0].logprobs}")
 
-        sequences = []
+        sequences, attention_mask = [], []
         for output in outputs:
             # left padding input
             input_len = len(output.prompt_token_ids)
             input_ids = [pad_token_id] * (max_input_len - input_len) + output.prompt_token_ids
-
+            left_mask = [0] * (max_input_len - input_len) + [1] * input_len
             # right padding output
             output_len = len(output.outputs[0].token_ids)
             output_ids = output.outputs[0].token_ids + [pad_token_id] * (max_output_len - output_len)
-            if output_ids[output_len - 1] != eos_token_id:
-                assert output_len == max_output_len
-                output_ids[-1] = eos_token_id
-
+            right_mask = [1] * output_len + [0] * (max_output_len - output_len)
             # concat input and output
             sequences.append(input_ids + output_ids)
+            attention_mask.append(left_mask + right_mask)
 
         sequences = torch.tensor(sequences)
-        attention_mask = sequences.ne(pad_token_id).to(dtype=torch.long)
-        state_seq = sequences[:, max_input_len - 1 : -1]
-        action_mask = state_seq.ne(eos_token_id) & state_seq.ne(pad_token_id)
-        # return sequences.to("cuda"), attention_mask.to("cuda"), action_mask.to("cuda")
+        attention_mask = torch.tensor(attention_mask)
+        action_mask = attention_mask[:, max_input_len - 1 : -1]
 
         return {
-            "sequences_vllm": sequences,
-            "attention_mask_vllm": attention_mask,
-            "action_mask_vllm": action_mask
+            "sequences": sequences,
+            "attention_mask": attention_mask,
+            "action_mask": action_mask
             }
 
     def flush(self):
