@@ -50,25 +50,22 @@ import transformers.models
 
 def get_unpad_data(attention_mask: "torch.Tensor") -> Tuple["torch.Tensor", "torch.Tensor", int]:
     r"""
-    Prepares the indices and seqlens for flash attn varlen function.
+    This function takes an attention mask tensor as input and computes several related tensors and a maximum sequence length.
+
+    Args:
+        attention_mask (torch.Tensor): A tensor representing the attention mask.
+
     Returns:
-        indices: indices of non-masked tokens from the flattened sequence.
-        cu_seqlens: the cumulative sequence lengths in the current batch, always starts from 0.
-        max_seqlen_in_batch: the largest seqlen in the current batch.
-    e.g.
-    ```
-    [
-        [1, 1, 2, 2, 2, 0],
-        [1, 2, 2, 3, 3, 3],
-    ]
-    0 means padding
-    ```
-    ->
-    ```
-    [0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11]
-    [0, 2, 5, 6, 8, 11] [leftpad 0 + cumsum([2, 3, 1, 2, 3])]
-    3
-    ```
+        Tuple[torch.Tensor, torch.Tensor, int]: A tuple containing the following:
+            - indices (torch.Tensor): An index tensor computed based on the attention mask.
+            - cu_seqlens (torch.Tensor): A cumulative sequence length tensor padded with zeros.
+            - max_seqlen_in_batch (int): The maximum sequence length within the batch.
+
+    Example:
+        >>> import torch
+        >>> attention_mask = torch.tensor([[1, 1, 0], [1, 1, 1]])
+        >>> get_unpad_data(attention_mask)
+        (tensor([0, 1, 2, 3, 4]), tensor([0, 2, 5]), 3)
     """
     seqlens_in_batch = attention_mask.sum(dim=-1)
     indices = torch.arange(0, torch.sum(attention_mask), device=attention_mask.device)
