@@ -257,7 +257,8 @@ class PPOTrainer(ABC):
         action_log_probs, output = self.actor(
             experience.sequences, num_actions, 
             attention_mask=experience.attention_mask, 
-            return_output=True
+            return_output=True,
+            packing_samples=self.args.packing_samples
         )
 
         # loss function

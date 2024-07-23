@@ -145,11 +145,18 @@ def _get_actor_model(base_llm_model):
                 use_cache=False,
                 return_dict=True
             )
-            labels = input_ids[:, 1:].unsqueeze(-1)
+            labels = input_ids[:, 1:].unsqueeze(-1) # bsz * seq_len * 1
+            if packing_samples:
+                padding = torch.zeros(1, 1, 1, dtype=input_ids.dtype, device=input_ids.device)
+                labels = torch.cat((labels, padding), dim=1)
             last_hidden_state = output["last_hidden_state"]
             logits = getattr(self, self.config.lm_head_name)(last_hidden_state).float()
             
-            log_probs = F.log_softmax(logits[:, :-1, :], dim=-1)
+            if not packing_samples:
+                log_probs = F.log_softmax(logits, dim=-1)
+            else:
+                log_probs = F.log_softmax(logits[:, :-1, :], dim=-1)
+
             log_probs = log_probs.gather(dim=-1, index=labels).squeeze(-1)
 
             if return_output:

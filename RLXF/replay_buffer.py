@@ -16,9 +16,9 @@ class BufferItem:
     Shapes of each tensor:
     sequences: (S)
     action_log_probs: (A)
-    values: (1)
-    returns: (1)
-    advatanges: (1)
+    values: (A)
+    returns: (A)
+    advatanges: (A)
     attention_mask: (S)
     action_mask: (A)
 
@@ -77,63 +77,27 @@ def zero_pad_sequences(sequences: List[torch.Tensor], side: str = "left") -> tor
     return torch.stack(padded_sequences, dim=0)
 
 
-def make_experience_batch(items: List[BufferItem]) -> Experience:
-    kwargs = {}
-    keys = (
-        "sequences",
-        "action_log_probs",
-        "values",
-        "returns",
-        "advantages",
-        "attention_mask",
-        "action_mask",
-    )
-    for key in keys:
-        vals = [getattr(item, key) for item in items]
-        batch_data = zero_pad_sequences(vals, "left")
-        kwargs[key] = batch_data
+# def make_experience_batch(items: List[BufferItem]) -> Experience:
+#     kwargs = {}
+#     keys = (
+#         "sequences",
+#         "action_log_probs",
+#         "values",
+#         "returns",
+#         "advantages",
+#         "attention_mask",
+#         "action_mask",
+#     )
+#     for key in keys:
+#         vals = [getattr(item, key) for item in items]
+#         batch_data = zero_pad_sequences(vals, "left")
+#         kwargs[key] = batch_data
 
-    kwargs["info"] = {}
-    for key in items[0].info.keys():
-        vals = torch.tensor([item.info[key] for item in items])
-        kwargs["info"][key] = vals
-    return Experience(**kwargs)
-
-
-def remove_padding_in_sequences(items):
-    for item in items:
-        seq, act_log_prob, value, ret, adv, att_mask, act_mask = (
-            item.sequences,
-            item.action_log_probs,
-            item.values,
-            item.returns,
-            item.advantages,
-            item.attention_mask,
-            item.action_mask,
-        )
-        right_pad = (1 - act_mask.long()).sum()
-        right_pad = None if right_pad == 0 else -right_pad
-
-        # left_pad for seq and att_mask
-        left_pad = att_mask.long().argmax()
-        (
-            item.sequences,
-            item.action_log_probs,
-            item.values,
-            item.returns,
-            item.advantages,
-            item.attention_mask,
-            item.action_mask,
-        ) = (
-            seq[left_pad:right_pad],
-            act_log_prob[:right_pad],
-            value[:right_pad],
-            ret[:right_pad],
-            adv[:right_pad],
-            att_mask[left_pad:right_pad],
-            act_mask[:right_pad],
-        )
-    return items
+#     kwargs["info"] = {}
+#     for key in items[0].info.keys():
+#         vals = torch.tensor([item.info[key] for item in items])
+#         kwargs["info"][key] = vals
+#     return Experience(**kwargs)
 
 
 class NaiveReplayBuffer(ABC):
@@ -142,16 +106,18 @@ class NaiveReplayBuffer(ABC):
     Args:
         sample_batch_size (int): Batch size when sampling.
         limit (int, optional): Limit of number of experience samples. A number <= 0 means unlimited. Defaults to 0.
-        cpu_offload (bool, optional): Whether to offload experience to cpu when sampling. Defaults to True.
+        cpu_offload (bool, optional): Whether to offload experience to cpu when sampling. Defaults to False.
     """
 
-    def __init__(self, sample_batch_size: int, limit: int = 0, cpu_offload: bool = True) -> None:
+    def __init__(self, args) -> None:
         super().__init__()
-        self.sample_batch_size = sample_batch_size
-        # limit <= 0 means always use the latest experience, otherwise use some history
-        self.limit = limit
-        self.cpu_offload = cpu_offload
-        self.target_device = torch.device(f"cuda:{torch.cuda.current_device()}")
+        self.sample_batch_size = args.micro_train_batch_size
+        self.limit = args.buffer_limit 
+        # buffer_limit <= 0 means always use the latest experience, otherwise use some history
+        self.cpu_offload = args.buffer_cpu_offload
+        self.buffer_history_ratio = args.buffer_history_ratio
+        self.packing_samples = args.packing_samples
+        self.target_device = torch.cuda.current_device()
         self.historys: List[BufferItem] = []
         self.items: List[BufferItem] = []
 
@@ -160,11 +126,10 @@ class NaiveReplayBuffer(ABC):
         if self.cpu_offload:
             experience.to_device(torch.device("cpu"))
         items = split_experience_batch(experience)
-        items = remove_padding_in_sequences(items)
         self.historys.extend(items)
         if self.limit > 0:
-            self.items.extend(random.sample(self.historys, len(items) // 8))
-            self.items.extend(random.sample(items, 7 * len(items) // 8))
+            self.items.extend(random.sample(self.historys, int(len(items) * self.buffer_history_ratio)))
+            self.items.extend(random.sample(items, int(len(items) * (1 - self.buffer_history_ratio))))
             samples_to_remove = len(self.historys) - self.limit
             if samples_to_remove > 0:
                 self.historys = self.historys[samples_to_remove:]
@@ -174,13 +139,13 @@ class NaiveReplayBuffer(ABC):
     def clear(self) -> None:
         self.items.clear()
 
-    @torch.no_grad()
-    def sample(self) -> Experience:
-        items = random.sample(self.items, self.sample_batch_size)
-        experience = make_experience_batch(items)
-        if self.cpu_offload:
-            experience.to_device(self.target_device)
-        return experience
+    # @torch.no_grad()
+    # def sample(self) -> Experience:
+    #     items = random.sample(self.items, self.sample_batch_size)
+    #     experience = make_experience_batch(items)
+    #     if self.cpu_offload:
+    #         experience.to_device(self.target_device)
+    #     return experience
 
     def __len__(self) -> int:
         return len(self.items)
@@ -188,9 +153,29 @@ class NaiveReplayBuffer(ABC):
     def __getitem__(self, idx: int) -> BufferItem:
         return self.items[idx]
 
-    def collate_fn(self, batch) -> Experience:
-        experience = make_experience_batch(batch)
-        return experience
+    def collate_fn(self, items) -> Experience:
+        if self.packing_samples:
+            raise NotImplementedError
+        kwargs = {}
+        keys = (
+            "sequences",
+            "action_log_probs",
+            "values",
+            "returns",
+            "advantages",
+            "attention_mask",
+            "action_mask",
+        )
+        for key in keys:
+            vals = [getattr(item, key) for item in items]
+            batch_data = zero_pad_sequences(vals, "left")
+            kwargs[key] = batch_data
+
+        kwargs["info"] = {}
+        for key in items[0].info.keys():
+            vals = torch.tensor([item.info[key] for item in items])
+            kwargs["info"][key] = vals
+        return Experience(**kwargs)
 
     def normalize(self, attribute: str, strategy) -> None:
         assert attribute == "advantages"
@@ -200,8 +185,8 @@ class NaiveReplayBuffer(ABC):
             items.append(getattr(item, attribute))
             action_masks.append(item.action_mask)
 
-        items_vector = torch.cat(items).float().flatten()
-        action_masks_vector = torch.cat(action_masks).flatten()
+        items_vector = torch.cat([item.flatten() for item in items]).float()
+        action_masks_vector = torch.cat([mask.flatten() for mask in action_masks])
 
         # for DP
         # mean

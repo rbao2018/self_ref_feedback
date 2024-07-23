@@ -9,7 +9,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 
-from openrlhf.models.utils import compute_reward, masked_mean
+from openrlhf.models.utils import compute_reward
 from openrlhf.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -184,7 +184,7 @@ class NaiveExperienceMaker(ABC):
         )
 
         info = {
-            "kl": masked_mean(kl, action_mask, dim=-1),
+            "kl": kl.sum(dim=-1) / action_mask.float().sum(dim=-1),
             "reward": r,
             "return": reward.sum(dim=-1),
             "response_length": action_mask.float().sum(dim=-1),
@@ -280,8 +280,13 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         a = torch.split(sequences, batch_size, dim=0)
         b = torch.split(attention_mask, batch_size, dim=0)
         c = torch.split(action_mask, batch_size, dim=0)
-        for (sequences_cpu, attention_mask_cpu, action_mask_cpu) in zip(a,b,c):
+        for (ori_sequences_cpu, attention_mask_cpu, action_mask_cpu) in zip(a,b,c):
             num_actions = action_mask_cpu.size(1)
+
+            if self.strategy.args.packing_samples:
+                sequences_cpu = ori_sequences_cpu[attention_mask_cpu == 1].unsqueeze(0)
+            else:
+                sequences_cpu = ori_sequences_cpu
             
             # values
             value_ref = self.critic.forward.remote(sequences_cpu, action_mask_cpu, attention_mask_cpu)
@@ -330,6 +335,22 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             else:
                 pass
 
+            if self.strategy.args.packing_samples:
+                # reshape value by select corresponding attention mask
+                pad_value = torch.zeros_like(attention_mask_device, dtype=value.dtype)
+                pad_value[attention_mask_device == 1] = value.flatten()
+                value = pad_value[:, - action_mask_device.size(1) - 1 : -1]
+
+                # reshape action_log_probs by select corresponding attention mask
+                pad_action_log_probs = torch.zeros_like(attention_mask_device, dtype=action_log_probs.dtype)
+                pad_action_log_probs[attention_mask_device == 1] = action_log_probs.flatten()
+                action_log_probs = pad_action_log_probs[:, - action_mask_device.size(1) - 1 : -1]
+
+                # reshape base_action_log_probs by select corresponding attention mask
+                pad_base_action_log_probs = torch.zeros_like(attention_mask_device, dtype=action_log_probs.dtype)
+                pad_base_action_log_probs[attention_mask_device == 1] = base_action_log_probs.flatten()
+                base_action_log_probs = pad_base_action_log_probs[:, - action_mask_device.size(1) - 1 : -1]
+
             reward, kl = compute_reward(
                 r,
                 self.kl_ctl.value,
@@ -346,7 +367,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             )
 
             info = {
-                "kl": masked_mean(kl, action_mask_device, dim=-1),
+                "kl": kl.sum(dim=-1) / action_mask.float().sum(dim=-1),
                 "reward": r,
                 "return": reward.sum(dim=-1),
                 "response_length": action_mask_device.float().sum(dim=-1),
@@ -354,14 +375,14 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             }
 
             experience = Experience(
-                sequences_device,
+                ori_sequences_cpu.to(device),
                 action_log_probs,
                 value,
                 returns,
                 advantage,
                 attention_mask_device,
                 action_mask_device,
-                info,
+                info
             )
 
             if self.strategy.args.perf:
@@ -420,7 +441,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             max_output_len = max(max_output_len, len(output.outputs[0].token_ids))
 
 
-        sequences, attention_mask = [], []
+        sequences, attention_mask, action_mask = [], [], []
         for output in outputs:
             # left padding input
             input_len = len(output.prompt_token_ids)
@@ -433,10 +454,11 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             # concat input and output
             sequences.append(input_ids + output_ids)
             attention_mask.append(left_mask + right_mask)
+            action_mask.append(right_mask)
 
         sequences = torch.tensor(sequences)
         attention_mask = torch.tensor(attention_mask)
-        action_mask = attention_mask[:, max_input_len - 1 : -1]
+        action_mask = torch.tensor(action_mask)
 
         return {
             "sequences": sequences,

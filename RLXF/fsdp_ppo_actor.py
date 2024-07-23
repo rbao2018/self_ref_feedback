@@ -14,11 +14,13 @@ from transformers.trainer import get_scheduler
 from openrlhf.datasets import SFTDataset
 from openrlhf.utils.distributed_util import init_process_group
 
+
 from .launcher import BasePPORole
 from .utils import blending_datasets, get_tokenizer
 from .dataset.prompt_dataset import PromptDataset
-from .experience_maker import Experience, RemoteExperienceMaker
 from .trainer.ppo_trainer import PPOTrainer
+from .experience_maker import Experience, RemoteExperienceMaker
+from .replay_buffer import NaiveReplayBuffer
 from .fsdp_strategy import FSDPStrategy
 from .model.actor_model import get_actor_model
 
@@ -52,6 +54,7 @@ class ActorPPOTrainer(PPOTrainer):
             self.reward_fn,
             vllm_engines=self.vllm_engines,
         )
+        self.replay_buffer = NaiveReplayBuffer(self.args)
         # Create torch group with deepspeed rank 0 and all vllm ranks
         # to update vllm engine's weights after each training stage.
         #
@@ -130,45 +133,50 @@ class ActorPPOTrainer(PPOTrainer):
             global_step = 1 + math.ceil(global_step / update_timesteps) * update_timesteps
             self.experience_maker.clear()
             for input_prompts in self.prompts_dataloader:
+                
                 self.experience_maker.add_requests(input_prompts)
+
                 if global_step % update_timesteps == 0:
                     self._broadcast_to_vllm()
                     torch.cuda.empty_cache()
                     rank = self.strategy.get_rank()
                     total_group = self.strategy.world_size // len(self.vllm_engines)
-                    outputs = self.experience_maker.generate_vllm(
+                    vllm_outputs = self.experience_maker.generate_vllm(
                         rank = rank,
                         total_group = total_group,
                         **self.generate_kwargs
                     )
                     generate_text = self.tokenizer.decode(
-                        outputs["sequences_vllm"][0],
+                        vllm_outputs["sequences"][0],
                         skip_special_tokens=(global_step > 3 * update_timesteps),
                     )
                     self.strategy.print(generate_text)
-                    # training
+                    # wait critic model training done for optimize pipeline
                     if critic_status_ref is not None:
                         critic_status = ray.get(critic_status_ref)
                     else:
                         critic_status = {}
                     torch.distributed.barrier()
+
                     self.experience_maker.make_experience(
                         self.replay_buffer,
-                        **outputs,
+                        **vllm_outputs,
                         batch_size=self.micro_rollout_batch_size,
                         **self.generate_kwargs
                     )
-                    # self.replay_buffer.append(experience)
+
                     self.replay_buffer.normalize("advantages", self.strategy)
                     self.experience_maker.flush()
                     torch.cuda.empty_cache()
                     if self.critic_train_remote:
                         critic_status_ref = self.critic.fit.remote()
+
                     # update kl control
                     status = self.ppo_train()
                     self.replay_buffer.clear()
                     status.update(critic_status)
                     self.kl_ctl.update(status["kl"], args.rollout_batch_size)
+                    
                     # logs/checkpoints
                     self.save_logs_and_checkpoints(
                         args, global_step // update_timesteps, pbar, status

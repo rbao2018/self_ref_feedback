@@ -146,12 +146,8 @@ def _add_rlhf_args(parser):
                        help="number of gpus per node for reward model")
     group.add_argument("--colocate_critic_reward", action="store_true", default=False,
                        help="whether to colocate critic and reward model, if true, they will share same gpus.")
-    group.add_argument(
-        "--colocate_reward_ref",
-        action="store_true",
-        default=False,
-        help="whether to colocate reference and reward model, if true, they will share same gpus.",
-    )
+    group.add_argument("--colocate_reward_ref", action="store_true", default=False,
+                       help="whether to colocate reference and reward model, if true, they will share same gpus.")
     group.add_argument("--actor_num_nodes", type=int, default=1, 
                        help="number of nodes for actor")
     group.add_argument("--actor_num_gpus_per_node", type=int, default=1, 
@@ -176,6 +172,8 @@ def _add_rlhf_args(parser):
                        help="sampling probs for datasets")
     group.add_argument("--num_episodes", type=int, default=1)
     group.add_argument("--buffer_limit", type=int, default=0)
+    group.add_argument("--buffer_cpu_offload", action="store_true")
+    group.add_argument("--buffer_history_ratio", type=float, default=0.0)
     group.add_argument("--rollout_batch_size", type=int, default=512)
     group.add_argument("--micro_rollout_batch_size", type=int, default=8)
     group.add_argument("--n_samples_per_prompt", type=int, default=1)
