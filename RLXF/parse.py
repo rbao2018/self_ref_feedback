@@ -11,7 +11,6 @@ def parse_args(extra_args_provider=None, ignore_unknown_args=False):
     parser = _add_checkpointing_args(parser)
     parser = _add_validation_args(parser)
     parser = _add_data_args(parser)
-    parser = _add_supervise_finetune_args(parser)
     parser = _add_rlhf_args(parser)
     args = parser.parse_args()
     return args
@@ -32,6 +31,7 @@ def _add_initialize_args(parser):
     group.add_argument("--max_ckpt_num", type=int, default=3)
     group.add_argument("--max_ckpt_mem", type=int, default=1000)  # 1000GB
     group.add_argument("--max_epochs", type=int, default=1)
+    group.add_argument("--num_workers", type=int, default=64, help="Number of workers for processing the data.")
     group.add_argument("--micro_train_batch_size", type=int, default=8)
     group.add_argument("--actor_train_batch_size", type=int, default=8)
     group.add_argument("--critic_train_batch_size", type=int, default=8)
@@ -178,6 +178,7 @@ def _add_rlhf_args(parser):
     group.add_argument("--buffer_limit", type=int, default=0)
     group.add_argument("--rollout_batch_size", type=int, default=512)
     group.add_argument("--micro_rollout_batch_size", type=int, default=8)
+    group.add_argument("--n_samples_per_prompt", type=int, default=1)
     group.add_argument("--prompt_max_len", type=int, default=1024)
     group.add_argument("--generate_max_len", type=int, default=1024)
     group.add_argument("--ptx_coef", type=float, default=0.05)
@@ -228,55 +229,4 @@ def _add_data_args(parser):
     group.add_argument("--wandb_project", type=str, default="test")
     group.add_argument("--wandb_run_name", type=str,
                        default="%s" % datetime.now().strftime("%m%dT%H:%M"))
-    return parser
-
-
-def _add_supervise_finetune_args(parser):
-    group = parser.add_argument_group(title='SFT Training Configurations')
-    group.add_argument('--data_path', nargs='*', default=['ours/sample_instruct_stage1'],
-                        help='Path to the training dataset. Accepted format:'
-                        '1) a single data path, 2) multiple datasets in the'
-                        'form: dataset1-path dataset2-path ...')
-    group.add_argument('--data_split', type=str, default='10,0,0',
-                        help='Comma-separated list of proportions for training'
-                        'phase 1, 2, and 3 data. For example the split `2,4,4`'
-                        'will use 60% of data for phase 1, 20% for phase 2'
-                        'and 20% for phase 3.')
-    group.add_argument('--end_of_conversation_token', type=str, default="</s>",
-                        help='End of conversation words with one more tokens.')
-    group.add_argument('--sft_only_data_path', nargs='*',default=[],
-                        help='Path to the dataset for only using in SFT phase.')
-    group.add_argument('--prefix_instruction', action='store_true',
-                       help='Whether to use prefix instruction.')
-    group.add_argument('--adding_demonstrations', action='store_true',
-                       help='Whether to use prefix instruction.')
-    group.add_argument('--prompt_input', action='store_true',
-                       help='Whether to use prefix instruction.')
-    group.add_argument("--recipe", type=str, default="",
-                       help="the dataest reicpe")
-    group.add_argument("--cache_dir", type=str, default="/root/temp/cache/",
-                       help="the path of cache")
-    group.add_argument("--template_path", type=str, default=None,
-                       help="the path of template")
-    group.add_argument('--data_output_path', type=str, default='/root/temp/cache',
-                       help='Where to store the data-related files such as shuffle index. '
-                       'This needs to be on a local storage of a node (not on a shared storage)')
-    group.add_argument( "--tokenizer_path", type=str,
-                       help="Path to pretrained model or model identifier from huggingface.co/models.")
-    group.add_argument("--num_workers", type=int, default=64,
-                       help="Number of workers for processing the data.")
-    group.add_argument("--train_phase", type=int, default=1,
-                        help="the training phase")
-    group.add_argument("--sft_train_epochs", type=int, default=2,
-                        help="SFT data training epochs")
-    group.add_argument("--lse_square_scale", type=float, default=0.0,
-                       help="Auxiliary loss scale for Z-loss adopted from Palm")
-    group.add_argument('--inplace_backward', action='store_true',
-                       help='Loss backward in inplace.')
-    group.add_argument('--pairwise_allresponse', action='store_true',
-                       help='Loss backward in inplace.')
-    group.add_argument('--template_start_end', nargs='*', default=['Human:\n','Assistant:\n'],
-                        help='Template start and end words for all sthree steps,'
-                        'Very important for correctly add final token when input text'
-                        'is reaching the max_seq_len')
     return parser
