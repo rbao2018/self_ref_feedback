@@ -116,7 +116,6 @@ def get_llm_for_sequence_regression(
     if packing_samples:
         assert use_flash_attention_2, "Only support `--packing_samples` with Flash Attention 2."
         model_type = getattr(model.config, "model_type", None)
-        model.config.packing_samples = True
         patch_for_block_diag_attn(model_type)
 
     # NOTE: For reward model training only, intialize value_head manually
@@ -151,6 +150,7 @@ def _get_reward_model(base_llm_model):
                 mask = range_tensor < seq_lens.unsqueeze(1)
                 # 使用掩码来选择有效的元素
                 position_ids = range_tensor.expand(seq_lens.size(0), max_len)[mask]
+                # 输入的inputs_ids是一个batch(shape=(1, sum_of_seq_lens))的数据，所以需要在前面增加一个维度
                 position_ids = position_ids.unsqueeze(0)
             else:
                 # https://github.com/OpenRLHF/OpenRLHF/issues/217
@@ -204,7 +204,7 @@ def _get_critic_model(base_llm_model):
             return_output=False,
             packing_samples=False,
         ) -> torch.Tensor:
-            seq_lens = attention_mask.sum(dim=-1).flatten()
+            seq_lens = attention_mask.sum(dim=-1)
             max_len = seq_lens.max().item()
             if packing_samples:
                 # 创建一个范围张量
@@ -213,6 +213,7 @@ def _get_critic_model(base_llm_model):
                 mask = range_tensor < seq_lens.unsqueeze(1)
                 # 使用掩码来选择有效的元素
                 position_ids = range_tensor.expand(seq_lens.size(0), max_len)[mask]
+                # 输入的inputs_ids是一个batch(shape=(1, sum_of_seq_lens))的数据，所以需要在前面增加一个维度
                 position_ids = position_ids.unsqueeze(0)
             else:
                 # https://github.com/OpenRLHF/OpenRLHF/issues/217

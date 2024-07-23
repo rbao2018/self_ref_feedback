@@ -23,7 +23,7 @@ def main(args):
     )
     strategy.setup_distributed()
     strategy.print(args)
-     # configure model
+    # configure model
     model = get_llm_for_sequence_regression(
         args.pretrain,
         "reward",
@@ -68,14 +68,14 @@ def main(args):
         args.micro_train_batch_size,
         pin_memory=True,
         shuffle=True,
-        collate_fn=train_dataset.collate_fn if not args.packing_samples else train_dataset.packing_collate_fn
+        collate_fn=train_dataset.packing_collate_fn if args.packing_samples else train_dataset.collate_fn
     )
     eval_dataloader = strategy.setup_dataloader(
         eval_dataset, 
         args.micro_train_batch_size, 
         pin_memory=True, 
         shuffle=False, 
-        collate_fn=eval_dataset.collate_fn if not args.packing_samples else train_dataset.packing_collate_fn
+        collate_fn=train_dataset.packing_collate_fn if args.packing_samples else train_dataset.collate_fn
     )
     # scheduler
     num_update_steps_per_epoch = len(train_dataloader) * args.max_epochs // strategy.accumulated_gradient
