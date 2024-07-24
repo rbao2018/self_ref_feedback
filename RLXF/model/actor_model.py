@@ -8,7 +8,6 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 from openrlhf.utils.logging import init_logger
-from openrlhf.models.utils import find_all_linear_names
 
 from .packing_utils import patch_for_block_diag_attn
 
@@ -78,8 +77,8 @@ def get_actor_model(
         attn_implementation = "flash_attention_2" if args.flash_attn else "eager",
         **kwargs,
     )
-    if model_type == "actor":
-        model.config.architectures = config.architectures
+    
+    model.config.architectures = config.architectures
 
     # LoRA
     if args.lora_rank > 0:
@@ -87,7 +86,7 @@ def get_actor_model(
         lora_config = LoraConfig(
             r=args.lora_rank,
             lora_alpha=args.lora_alpha,
-            target_modules=args.target_modules or find_all_linear_names(model),
+            target_modules=args.target_modules,
             lora_dropout=0,
             bias="none",
         )
@@ -146,13 +145,15 @@ def _get_actor_model(base_llm_model):
                 return_dict=True
             )
             labels = input_ids[:, 1:].unsqueeze(-1) # bsz * seq_len * 1
+            
             if packing_samples:
                 padding = torch.zeros(1, 1, 1, dtype=input_ids.dtype, device=input_ids.device)
                 labels = torch.cat((labels, padding), dim=1)
+
             last_hidden_state = output["last_hidden_state"]
             logits = getattr(self, self.config.lm_head_name)(last_hidden_state).float()
             
-            if not packing_samples:
+            if packing_samples:
                 log_probs = F.log_softmax(logits, dim=-1)
             else:
                 log_probs = F.log_softmax(logits[:, :-1, :], dim=-1)

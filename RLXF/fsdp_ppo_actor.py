@@ -85,7 +85,8 @@ class ActorPPOTrainer(PPOTrainer):
                     master_port,
                     i * vllm_tensor_parallel_size + 1,
                     world_size,
-                    "vllm",
+                    "openrlhf",
+                    backend="nccl",
                 )
                 for i, engine in enumerate(self.vllm_engines)
             ]
@@ -94,7 +95,7 @@ class ActorPPOTrainer(PPOTrainer):
                 init_method=f"tcp://{master_address}:{master_port}",
                 world_size=world_size,
                 rank=0,
-                group_name="vllm",
+                group_name="openrlhf",
             )
             ray.get(refs)
         torch.distributed.barrier()
@@ -203,16 +204,16 @@ class ActorPPOTrainer(PPOTrainer):
                 shape = param.shape
                 # refs = []
                 for engine in self.vllm_engines:
-                    engine.update_weight.remote(name, dtype=param.dtype, shape=shape, empty_cache=count == num_params)
+                    # refs.append()
+                    engine.update_weight.remote(name, dtype=param.dtype, shape=shape, empty_cache = count ==num_params)
                 device_data = param.data.to("cuda")
-                torch.distributed.broadcast(
-                    device_data, 0, group=self._model_update_group
-                )
+                torch.distributed.broadcast(device_data, 0, group=self._model_update_group)
                 del device_data
-                if count % 10 == 0:
-                    torch.cuda.empty_cache()
+                # ray.get(refs)
+                if count % 8 == 0: torch.cuda.empty_cache()
         del model_state_dict
         gc.collect()
+        torch.cuda.empty_cache()
 
 
 @ray.remote

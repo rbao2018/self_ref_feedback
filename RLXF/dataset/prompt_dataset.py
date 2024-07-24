@@ -40,8 +40,11 @@ class PromptDataset(Dataset):
         apply_chat_template = getattr(self.strategy.args, "apply_chat_template", False)
         if apply_chat_template:
             apply_chat_template = self.tokenizer.apply_chat_template
+            tokenizer_chat_template = getattr(self.strategy.args, "tokenizer_chat_template", None)
+            if tokenizer_chat_template:
+                self.tokenizer.chat_template = tokenizer_chat_template
 
-        def _filter_data(self, examples):
+        def _filter_data(examples):
             chunks = []
             from itertools import zip_longest
             padded_lists = zip_longest(*examples.values(), fillvalue=None)
@@ -66,3 +69,6 @@ class PromptDataset(Dataset):
     
     def __getitem__(self, idx):
         return self.prompts[idx]
+    
+    def collate_fn(self, item_list):
+        return [x["input_ids"] for x in item_list]

@@ -367,7 +367,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             )
 
             info = {
-                "kl": kl.sum(dim=-1) / action_mask.float().sum(dim=-1),
+                "kl": kl.sum(dim=-1) / action_mask_device.float().sum(dim=-1),
                 "reward": r,
                 "return": reward.sum(dim=-1),
                 "response_length": action_mask_device.float().sum(dim=-1),

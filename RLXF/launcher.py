@@ -83,7 +83,7 @@ class ReferenceModelRayActor(BasePPORole):
                 sequences.to(device),
                 num_actions,
                 attention_mask.to(device),
-                return_output,
+                return_output=return_output,
                 packing_samples=self.strategy.args.packing_samples)
             torch.cuda.empty_cache()
         return log_probs.to("cpu")
@@ -97,12 +97,7 @@ class RewardModelRayActor(BasePPORole):
         model = get_llm_for_sequence_regression(
             pretrain,
             "reward",
-            bf16=strategy.args.bf16,
-            global_rank=strategy.get_rank(),
-            lora_rank=strategy.args.lora_rank,
-            lora_alpha=strategy.args.lora_alpha,
-            target_modules=strategy.args.target_modules,
-            use_flash_attention_2=strategy.args.flash_attn,
+            strategy.args
         )
         strategy.print(model)
         self.model = strategy.prepare_model(model)

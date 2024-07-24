@@ -70,12 +70,7 @@ class CriticModelRayActor(BasePPORole):
         model = get_llm_for_sequence_regression(
             pretrain,
             "critic",
-            bf16=strategy.args.bf16,
-            global_rank=strategy.get_rank(),
-            lora_rank=strategy.args.lora_rank,
-            lora_alpha=strategy.args.lora_alpha,
-            target_modules=strategy.args.target_modules,
-            use_flash_attention_2=strategy.args.flash_attn
+            strategy.args
         )
         strategy.print(model)
         self.critic = strategy.prepare_model(model)
@@ -125,7 +120,10 @@ class CriticModelRayActor(BasePPORole):
         device = torch.cuda.current_device()
         self.critic.eval()
         with torch.no_grad():
-            value = self.critic(sequences.to(device), action_mask.to(device), attention_mask.to(device))
+            value = self.critic(sequences.to(device), 
+                                action_mask.to(device), 
+                                attention_mask.to(device),
+                                packing_samples=self.strategy.args.packing_samples)
         self.critic.train()  # reset model state
         return value.to("cpu")
 

@@ -61,7 +61,6 @@ def split_experience_batch(experience: Experience) -> List[BufferItem]:
     return items
 
 
-
 def make_experience_batch(items: List[BufferItem]) -> Experience:
     kwargs = {}
     keys = ("sequences", "attention_mask", 
@@ -98,7 +97,7 @@ class NaiveReplayBuffer(ABC):
     Args:
         sample_batch_size (int): Batch size when sampling.
         limit (int, optional): Limit of number of experience samples. A number <= 0 means unlimited. Defaults to 0.
-        cpu_offload (bool, optional): Whether to offload experience to cpu when sampling. Defaults to False.
+        cpu_offload (bool, optional): Whether to offload experience to cpu when sampling. Defaults to True.
     """
 
     def __init__(self, args) -> None:
@@ -169,6 +168,10 @@ class NaiveReplayBuffer(ABC):
                 "advantages": torch.cat([item.advantages for item in items]).unsqueeze(0),
                 "action_mask": torch.cat([item.action_mask for item in items]).unsqueeze(0)
             }
+            kwargs["info"] = {}
+            for key in items[0].info.keys():
+                vals = torch.tensor([item.info[key] for item in items])
+                kwargs["info"][key] = vals
             experience = Experience(**kwargs)
         else:
             experience = make_experience_batch(items)

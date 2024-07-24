@@ -172,7 +172,7 @@ def _add_rlhf_args(parser):
                        help="sampling probs for datasets")
     group.add_argument("--num_episodes", type=int, default=1)
     group.add_argument("--buffer_limit", type=int, default=0)
-    group.add_argument("--buffer_cpu_offload", action="store_true")
+    group.add_argument("--buffer_cpu_offload", type=bool, default=True)
     group.add_argument("--buffer_history_ratio", type=float, default=0.0)
     group.add_argument("--rollout_batch_size", type=int, default=512)
     group.add_argument("--micro_rollout_batch_size", type=int, default=8)

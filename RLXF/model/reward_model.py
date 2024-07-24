@@ -18,14 +18,7 @@ logger = init_logger(__name__)
 def get_llm_for_sequence_regression(
     model_name_or_path: str,
     model_type: str,
-    bf16=True,
-    global_rank=0,
-    lora_rank=0,
-    lora_alpha=16,
-    target_modules=None,
-    use_flash_attention_2 = True,
-    init_value_head: bool = False,
-    packing_samples=False,
+    args,
     **kwargs,
 ) -> nn.Module:
     """Get transformer with a sequence classification head on top (linear layer).
@@ -84,24 +77,25 @@ def get_llm_for_sequence_regression(
         model_name_or_path,
         config = config,
         trust_remote_code = True,
-        torch_dtype = torch.bfloat16 if bf16 else torch.float16,
-        attn_implementation = "flash_attention_2" if use_flash_attention_2 else "eager",
+        torch_dtype = torch.bfloat16 if args.bf16 else torch.float16,
+        attn_implementation = "flash_attention_2" if args.flash_attn else "eager",
         **kwargs,
     )
 
     # LoRA
-    if lora_rank > 0:
+    if args.lora_rank > 0:
         model.enable_input_require_grads()
         lora_config = LoraConfig(
-            r=lora_rank,
-            lora_alpha=lora_alpha,
-            target_modules=target_modules,
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            target_modules=args.target_modules,
             lora_dropout=0,
             bias="none",
         )
         model = get_peft_model(model, lora_config)
 
-    
+    # https://github.com/huggingface/transformers/issues/26877
+    model.config.use_cache = False
 
     # MoE - balancing loss
     model_config = model.config.to_dict()
@@ -109,19 +103,16 @@ def get_llm_for_sequence_regression(
         print("[MoE] set output_router_logits as True")
         model.config.output_router_logits = True
     
-    # https://github.com/huggingface/transformers/issues/26877
-    model.config.use_cache = False
-
     # packing samples using Flash Attention 2
-    if packing_samples:
-        assert use_flash_attention_2, "Only support `--packing_samples` with Flash Attention 2."
+    if args.packing_samples:
+        assert args.flash_attn, "Only support `--packing_samples` with Flash Attention 2."
         model_type = getattr(model.config, "model_type", None)
         patch_for_block_diag_attn(model_type)
 
     # NOTE: For reward model training only, intialize value_head manually
     # because deepspeed.zero.Init() will not intialize them.
     # TODO: Find a better way to clarify reward model training.
-    if init_value_head:
+    if kwargs.get("init_value_head", False):
         model.value_head.weight.data.normal_(mean=0.0, std=1 / (config.hidden_size + 1))
     return model
 
@@ -173,6 +164,7 @@ def _get_reward_model(base_llm_model):
 
             if packing_samples:
                 eos_indices = torch.cumsum(seq_lens, dim=0).flatten() - 1
+                print(eos_indices)
                 reward = all_values.flatten().gather(dim=0, index=eos_indices)
             else:
                 eos_indices = attention_mask.long().fliplr().argmax(dim=1, keepdim=True)
