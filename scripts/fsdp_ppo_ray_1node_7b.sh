@@ -48,8 +48,8 @@ ray job submit --runtime-env-json='{"working_dir": "/root/OpenRLHF"}' -- python 
     --reward_pretrain $CRITIC_MODEL \
     --logging_path $LOGDIR/$PREFIX \
     --save_path /root/temp/output/$PREFIX \
-    --critic_train_batch_size 2 \
-    --actor_train_batch_size 4 \
+    --critic_train_batch_size 4 \
+    --actor_train_batch_size 8 \
     --train_batch_size 128 \
     --rollout_batch_size 128 \
     --micro_rollout_batch_size 16 \

@@ -124,7 +124,7 @@ class PPOTrainer(ABC):
         self.experience_maker = NaiveExperienceMaker(
             actor, critic, reward_model, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
         )
-        self.replay_buffer = NaiveReplayBuffer(micro_train_batch_size, buffer_limit, buffer_cpu_offload)
+        self.replay_buffer = NaiveReplayBuffer(self.args)
 
         self._wandb = None
         if self.strategy.args.use_wandb and self.strategy.is_rank_0():
@@ -328,6 +328,7 @@ class PPOTrainer(ABC):
             action_mask=experience.action_mask,
             attention_mask=experience.attention_mask,
             return_output=True,
+            packing_samples=self.args.packing_samples
         )
         # loss function
         critic_loss = self.critic_loss_fn(

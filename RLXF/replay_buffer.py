@@ -6,6 +6,8 @@ from typing import List, Optional
 import torch
 import torch.nn.functional as F
 
+from openrlhf.datasets.utils import zero_pad_sequences
+
 from .experience_maker import Experience
 
 
@@ -38,15 +40,8 @@ class BufferItem:
 def split_experience_batch(experience: Experience) -> List[BufferItem]:
     batch_size = experience.sequences.size(0)
     batch_kwargs = [{} for _ in range(batch_size)]
-    keys = (
-        "sequences",
-        "action_log_probs",
-        "values",
-        "returns",
-        "advantages",
-        "attention_mask",
-        "action_mask",
-    )
+    keys = ("sequences", "attention_mask", 
+            "action_log_probs", "values", "returns", "advantages", "action_mask")
     for key in keys:
         value = getattr(experience, key)
         vals = torch.unbind(value)
@@ -66,38 +61,35 @@ def split_experience_batch(experience: Experience) -> List[BufferItem]:
     return items
 
 
-def zero_pad_sequences(sequences: List[torch.Tensor], side: str = "left") -> torch.Tensor:
-    assert side in ("left", "right")
-    max_len = max(seq.size(0) for seq in sequences)
-    padded_sequences = []
-    for seq in sequences:
-        pad_len = max_len - seq.size(0)
-        padding = (pad_len, 0) if side == "left" else (0, pad_len)
-        padded_sequences.append(F.pad(seq, padding))
-    return torch.stack(padded_sequences, dim=0)
 
+def make_experience_batch(items: List[BufferItem]) -> Experience:
+    kwargs = {}
+    keys = ("sequences", "attention_mask", 
+            "action_log_probs", "values", "returns", "advantages", "action_mask")
+    for key in keys:
+        vals = []
+        if "_mask" in key:
+            for item in items:
+                mask = getattr(item, key)
+                vals.append(torch.ones(mask.sum().item(), dtype=torch.long, device = mask.device))
+            batch_data = zero_pad_sequences(vals, "left", value = 0)
+        elif key == "sequences":
+            for item in items:
+                sequences = item.sequences.flatten()[item.attention_mask.flatten() == 1]
+                vals.append(sequences)
+            batch_data = zero_pad_sequences(vals, "left", value = 0)
+        else:
+            for item in items:
+                val = getattr(item, key).flatten()[item.action_mask.flatten() == 1]
+                vals.append(val)
+            batch_data = zero_pad_sequences(vals, "left", value = 0.0)
+        kwargs[key] = batch_data
 
-# def make_experience_batch(items: List[BufferItem]) -> Experience:
-#     kwargs = {}
-#     keys = (
-#         "sequences",
-#         "action_log_probs",
-#         "values",
-#         "returns",
-#         "advantages",
-#         "attention_mask",
-#         "action_mask",
-#     )
-#     for key in keys:
-#         vals = [getattr(item, key) for item in items]
-#         batch_data = zero_pad_sequences(vals, "left")
-#         kwargs[key] = batch_data
-
-#     kwargs["info"] = {}
-#     for key in items[0].info.keys():
-#         vals = torch.tensor([item.info[key] for item in items])
-#         kwargs["info"][key] = vals
-#     return Experience(**kwargs)
+    kwargs["info"] = {}
+    for key in items[0].info.keys():
+        vals = torch.tensor([item.info[key] for item in items])
+        kwargs["info"][key] = vals
+    return Experience(**kwargs)
 
 
 class NaiveReplayBuffer(ABC):
@@ -154,28 +146,33 @@ class NaiveReplayBuffer(ABC):
         return self.items[idx]
 
     def collate_fn(self, items) -> Experience:
+        keys = ("action_log_probs", "values", "returns", "advantages", "action_mask")
         if self.packing_samples:
-            raise NotImplementedError
-        kwargs = {}
-        keys = (
-            "sequences",
-            "action_log_probs",
-            "values",
-            "returns",
-            "advantages",
-            "attention_mask",
-            "action_mask",
-        )
-        for key in keys:
-            vals = [getattr(item, key) for item in items]
-            batch_data = zero_pad_sequences(vals, "left")
-            kwargs[key] = batch_data
-
-        kwargs["info"] = {}
-        for key in items[0].info.keys():
-            vals = torch.tensor([item.info[key] for item in items])
-            kwargs["info"][key] = vals
-        return Experience(**kwargs)
+            for item in items:
+                pad_attention_mask = getattr(item, "attention_mask").flatten()
+                pad_action_mask = getattr(item, "action_mask").flatten()
+                sequence = getattr(item, "sequences").flatten()[pad_attention_mask==1]
+                attention_mask = torch.ones_like(sequence, dtype=pad_attention_mask.dtype, device=pad_attention_mask.device)
+                setattr(item, "sequences", sequence)
+                setattr(item, "attention_mask", attention_mask)
+                for key in keys:
+                    value = getattr(item, key).flatten()[pad_action_mask == 1]
+                    value_zero = torch.zeros_like(sequence, dtype=value.dtype, device=value.device)
+                    value_zero[ - pad_action_mask.sum() - 1 :-1] = value
+                    setattr(item, key, value_zero)
+            kwargs = {
+                "sequences": torch.cat([item.sequences for item in items]).unsqueeze(0),
+                "attention_mask":zero_pad_sequences([item.attention_mask for item in items], "left", value = 0),
+                "action_log_probs": torch.cat([item.action_log_probs for item in items]).unsqueeze(0),
+                "values": torch.cat([item.values for item in items]).unsqueeze(0),
+                "returns": torch.cat([item.returns for item in items]).unsqueeze(0),
+                "advantages": torch.cat([item.advantages for item in items]).unsqueeze(0),
+                "action_mask": torch.cat([item.action_mask for item in items]).unsqueeze(0)
+            }
+            experience = Experience(**kwargs)
+        else:
+            experience = make_experience_batch(items)
+        return experience
 
     def normalize(self, attribute: str, strategy) -> None:
         assert attribute == "advantages"
