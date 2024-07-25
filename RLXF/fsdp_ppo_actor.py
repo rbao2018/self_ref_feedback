@@ -54,7 +54,6 @@ class ActorPPOTrainer(PPOTrainer):
             self.reward_fn,
             vllm_engines=self.vllm_engines,
         )
-        self.replay_buffer = NaiveReplayBuffer(self.args)
         # Create torch group with deepspeed rank 0 and all vllm ranks
         # to update vllm engine's weights after each training stage.
         #

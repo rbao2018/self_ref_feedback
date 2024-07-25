@@ -124,7 +124,7 @@ class PPOTrainer(ABC):
         self.experience_maker = NaiveExperienceMaker(
             actor, critic, reward_model, initial_model, tokenizer, prompt_max_len, self.kl_ctl, strategy, reward_fn
         )
-        self.replay_buffer = NaiveReplayBuffer(self.args)
+        self.replay_buffer = NaiveReplayBuffer(self.micro_train_batch_size, self.args)
 
         self._wandb = None
         if self.strategy.args.use_wandb and self.strategy.is_rank_0():

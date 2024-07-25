@@ -53,15 +53,16 @@ ray job submit --runtime-env-json='{"working_dir": "/root/OpenRLHF"}' -- python 
     --train_batch_size 128 \
     --rollout_batch_size 128 \
     --micro_rollout_batch_size 16 \
-    --buffer_limit 256 \
-    --num_episodes 2 \
+    --num_episodes 1 \
     --max_epochs 1 \
     --logging_steps 1 \
-    --input_template "[INST] {} [/INST]\n" \
+    --apply_chat_template \
+    --input_key message \
     --prompt_max_len 1024 \
     --generate_max_len 1024 \
     --repetition_penalty 1.02 \
     --bf16 \
+    --packing_samples \
     --actor_learning_rate $Actor_Lr \
     --critic_learning_rate $Critic_Lr \
     --init_kl_coef 0.01 \
@@ -69,4 +70,5 @@ ray job submit --runtime-env-json='{"working_dir": "/root/OpenRLHF"}' -- python 
     --prompt_data_probs $PROBS \
     --use_wandb \
     --actor_init_on_gpu \
+    --gradient_checkpointing \
     --flash_attn >>"$LOGDIR/$PREFIX/$now_date"_train.log 2>"$LOGDIR/$PREFIX/$now_date"_train.err

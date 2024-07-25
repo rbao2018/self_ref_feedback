@@ -100,9 +100,9 @@ class NaiveReplayBuffer(ABC):
         cpu_offload (bool, optional): Whether to offload experience to cpu when sampling. Defaults to True.
     """
 
-    def __init__(self, args) -> None:
+    def __init__(self, sample_batch_size, args) -> None:
         super().__init__()
-        self.sample_batch_size = args.micro_train_batch_size
+        self.sample_batch_size = sample_batch_size
         self.limit = args.buffer_limit 
         # buffer_limit <= 0 means always use the latest experience, otherwise use some history
         self.cpu_offload = args.buffer_cpu_offload

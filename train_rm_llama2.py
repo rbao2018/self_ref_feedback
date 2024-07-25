@@ -27,14 +27,8 @@ def main(args):
     model = get_llm_for_sequence_regression(
         args.pretrain,
         "reward",
-        bf16=strategy.args.bf16,
-        global_rank=strategy.get_rank(),
-        lora_rank=strategy.args.lora_rank,
-        lora_alpha=strategy.args.lora_alpha,
-        target_modules=strategy.args.target_modules,
-        use_flash_attention_2=strategy.args.flash_attn,
-        init_value_head=not args.skip_train,
-        packing_samples=args.packing_samples
+        args,
+        init_value_head=not args.skip_train
     )
     args.input_template = args.input_template.replace('\\n', '\n')
 

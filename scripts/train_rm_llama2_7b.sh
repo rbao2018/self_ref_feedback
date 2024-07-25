@@ -27,7 +27,7 @@ export NCCL_ALGO=Tree
 
 now_date=$(date +%Y_%m%d_%H%M)
 
-torchrun --nproc_per_node 4 --nnodes $NNODES --master_addr $MASTER_ADDR --master_port 6666 --node_rank $RANK /mnt/data/self_ref_feedback/train_rm_llama2.py \
+torchrun --nproc_per_node 8 --nnodes $NNODES --master_addr $MASTER_ADDR --master_port 6666 --node_rank $RANK /mnt/data/self_ref_feedback/train_rm_llama2.py \
     --logging_path $LOGDIR/$PREFIX \
     --save_path /mnt/data/temp/output/$PREFIX \
     --save_steps -1 \
