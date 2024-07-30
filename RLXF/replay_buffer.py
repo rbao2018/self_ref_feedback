@@ -130,14 +130,6 @@ class NaiveReplayBuffer(ABC):
     def clear(self) -> None:
         self.items.clear()
 
-    # @torch.no_grad()
-    # def sample(self) -> Experience:
-    #     items = random.sample(self.items, self.sample_batch_size)
-    #     experience = make_experience_batch(items)
-    #     if self.cpu_offload:
-    #         experience.to_device(self.target_device)
-    #     return experience
-
     def __len__(self) -> int:
         return len(self.items)
 

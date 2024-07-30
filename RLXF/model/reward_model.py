@@ -164,7 +164,6 @@ def _get_reward_model(base_llm_model):
 
             if packing_samples:
                 eos_indices = torch.cumsum(seq_lens, dim=0).flatten() - 1
-                print(eos_indices)
                 reward = all_values.flatten().gather(dim=0, index=eos_indices)
             else:
                 eos_indices = attention_mask.long().fliplr().argmax(dim=1, keepdim=True)
