@@ -257,6 +257,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         super().__init__(*args, **kwargs)
         self.vllm_engines = vllm_engines
         self.input_ids = []
+        self._ref = []
 
     def clear(self):
         self.input_ids = []
@@ -392,7 +393,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             # send experience to critic
             experience_cpu = deepcopy(experience)
             experience_cpu.to_device("cpu")
-            self._ref = self.critic.append.remote(experience_cpu)
+            self._ref.append(self.critic.append.remote(experience_cpu))
             replay_buffer.append(experience)
         self.actor.train()  # reset model state
 
@@ -469,4 +470,4 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
     def flush(self):
         "Ensure all experience has been send to critic"
         ray.get(self._ref)
-        self._ref = None
+        self._ref = []

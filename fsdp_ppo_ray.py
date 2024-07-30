@@ -151,7 +151,8 @@ def train(args):
     # init vLLM engine for text generation
     vllm_engines = []
     if args.vllm_num_engines is not None:
-        for _ in range(args.vllm_num_engines):
+        max_len = args.max_len if args.max_len else args.prompt_max_len + args.generate_max_len
+        for i in range(args.vllm_num_engines):
             # When tensor_parallel_size=1, vLLM init model in LLMEngine directly, assign 1 GPU for it.
             num_gpus = int(args.vllm_tensor_parallel_size == 1)
             scheduling_strategy = None
@@ -176,7 +177,9 @@ def train(args):
                     trust_remote_code=True,
                     tensor_parallel_size=args.vllm_tensor_parallel_size,
                     gpu_memory_utilization=args.gpu_memory_utilization,
-                    seed=args.seed,
+                    seed=args.seed+i,
+                    enable_prefix_caching=args.enable_prefix_caching,
+                    max_model_len=max_len
                 )
             )
 

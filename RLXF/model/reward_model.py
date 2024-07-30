@@ -78,8 +78,7 @@ def get_llm_for_sequence_regression(
         config = config,
         trust_remote_code = True,
         torch_dtype = torch.bfloat16 if args.bf16 else torch.float16,
-        attn_implementation = "flash_attention_2" if args.flash_attn else "eager",
-        **kwargs,
+        attn_implementation = "flash_attention_2" if args.flash_attn else "eager"
     )
 
     # LoRA

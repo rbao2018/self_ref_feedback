@@ -119,8 +119,9 @@ class NaiveReplayBuffer(ABC):
         items = split_experience_batch(experience)
         self.historys.extend(items)
         if self.limit > 0:
-            self.items.extend(random.sample(self.historys, int(len(items) * self.buffer_history_ratio)))
-            self.items.extend(random.sample(items, int(len(items) * (1 - self.buffer_history_ratio))))
+            history_samples = random.sample(self.historys, int(len(items) * self.buffer_history_ratio))
+            self.items.extend(history_samples)
+            self.items.extend(random.sample(items, len(items) - len(history_samples)))
             samples_to_remove = len(self.historys) - self.limit
             if samples_to_remove > 0:
                 self.historys = self.historys[samples_to_remove:]

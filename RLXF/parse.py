@@ -39,7 +39,7 @@ def _add_initialize_args(parser):
     group.add_argument("--max_samples", type=int, default=10000000)
     group.add_argument("--load_checkpoint", action="store_true", default=False)
     group.add_argument("--max_norm", type=float, default=1.0)
-    group.add_argument("--max_len", type=int, default=512)
+    group.add_argument("--max_len", type=int, default=None)
     group.add_argument("--l2", type=float, default=0.0)
     group.add_argument("--loss", type=str, default="sigmoid")
     group.add_argument("--seed", type=int, default=42)
@@ -125,8 +125,10 @@ def _add_rlhf_args(parser):
                        help="Float that penalizes new tokens based on whether they appear in the prompt and the generated text so far. Values > 1 encourage the model to use new tokens, while values < 1 encourage the model to repeat tokens.")
     group.add_argument("--length_penalty", type=float,default=1.0,
                        help="Float that penalizes sequences based on their length. Used in beam search.")
-    group.add_argument("--gpu_memory_utilization", type=float,default=0.9,
+    group.add_argument("--gpu_memory_utilization", type=float,default=0.95,
                        help="Make gpu save memory for vllm, which differs from model size!")
+    group.add_argument("--enable_prefix_caching", action="store_true", default=False,
+                       help="Automatic Prefix Caching (APC in short) caches the KV cache of existing queries, so that a new query can directly reuse the KV cache if it shares the same prefix with one of the existing queries, allowing the new query to skip the computation of the shared part.")
     group.add_argument("--actor_learning_rate", type=float,default=9.65e-6,
                        help="Initial learning rate (after the potential warmup period) to use.")
     group.add_argument("--critic_learning_rate", type=float, default=5e-6,
