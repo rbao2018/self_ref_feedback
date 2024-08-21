@@ -248,7 +248,7 @@ if __name__ == '__main__':
     server_lists = []
     for i in range(args.client_port, args.client_port+args.num_clients):
         server_lists.append(f"http://0.0.0.0:{i}")
-    engine = Engine(args, server_lists)
+    
     engine = Engine(args, server_lists)
     func = None
 
