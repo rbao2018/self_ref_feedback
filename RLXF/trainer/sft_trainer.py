@@ -33,7 +33,6 @@ class SFTTrainer(ABC):
         eval_dataloader,
         scheduler,
         max_norm: float = 1,
-        pretrain_mode: bool = False,
         batch_size: int = 1,
         max_epochs: int = 2,
         tokenizer=None,
@@ -46,7 +45,6 @@ class SFTTrainer(ABC):
         self.train_dataloader = train_dataloader
         self.eval_dataloader = eval_dataloader
         self.scheduler = scheduler
-        self.pretrain_mode = pretrain_mode
         self.model = model
         self.tokenizer = tokenizer
         self.optimizer = optim
@@ -90,19 +88,22 @@ class SFTTrainer(ABC):
             # train
             self.model.train()
             loss_mean = 0
-            for inputs, labels, attention_masks, _ in self.train_dataloader:
+            for inputs, labels, attention_masks in self.train_dataloader:
+                if global_step < 3:
+                    self.strategy.print(self.tokenizer.batch_decode(inputs, skip_special_tokens=False))
                 inputs = inputs.to(torch.cuda.current_device())
                 attention_mask = attention_masks.to(torch.cuda.current_device())
                 labels = labels.to(torch.cuda.current_device())
-                output = self.model(inputs, attention_mask=attention_mask, return_output=True)
+                _, output = self.model(inputs, attention_mask=attention_mask, 
+                                               return_output=True,
+                                               packing_samples=self.args.packing_samples)
                 # mixtral
                 if self.aux_loss:
                     aux_loss = output.aux_loss
                 else:
                     aux_loss = 0
-            
                 # loss function
-                gpt_loss = self.loss_fn(output.logits, labels)
+                gpt_loss = self.loss_fn(output["logits"], labels)
                 loss = gpt_loss + aux_loss * self.args.aux_loss_coef
                 self.strategy.backward(loss, self.model, self.optimizer)
                 self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler)
@@ -119,6 +120,8 @@ class SFTTrainer(ABC):
                 global_step += 1
 
             epoch_bar.update()
+            save_path = args.save_path + f"/epoch{epoch+1}"
+            self.strategy.save_model(self.model, self.tokenizer, save_path)
 
     # logs/checkpoints/evaluation
     def save_logs_and_checkpoints(self, args, global_step, step_bar, logs_dict={}):
@@ -156,13 +159,15 @@ class SFTTrainer(ABC):
             disable=not self.strategy.is_rank_0(),
         )
 
-        for inputs, labels, attention_masks, _ in eval_dataloader:
+        for inputs, labels, attention_masks in eval_dataloader:
             inputs = inputs.to(torch.cuda.current_device())
             attention_mask = attention_masks.to(torch.cuda.current_device())
             labels = labels.to(torch.cuda.current_device())
-            output = self.model(inputs, attention_mask=attention_mask, return_output=True)
+            _, output = self.model(inputs, attention_mask=attention_mask, 
+                                return_output=True,
+                                packing_samples=self.args.packing_samples)
             # loss function
-            loss = self.loss_fn(output.logits, labels)
+            loss = self.loss_fn(output["logits"], labels)
 
             times += 1
             loss_sum += loss.item()

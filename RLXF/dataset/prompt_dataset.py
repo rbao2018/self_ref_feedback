@@ -1,5 +1,4 @@
 from torch.utils.data import Dataset
-from tqdm import tqdm
 
 def preprocess_data(data, input_template=None, input_key="input", apply_chat_template=None) -> str:
     if apply_chat_template:
