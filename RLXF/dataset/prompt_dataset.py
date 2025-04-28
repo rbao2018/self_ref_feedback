@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from torch.utils.data import Dataset
 
 def preprocess_data(data, input_template=None, input_key="input", apply_chat_template=None) -> str:
